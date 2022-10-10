@@ -1,0 +1,1019 @@
+---
+title: "Statistical Methods"
+output:
+  html_document:
+    df_print: paged
+---
+
+Supplementary methods for <b>A globally distributed insecticide resistance allele confers a fitness cost in the absence of insecticide in Aedes aegypti, the yellow fever mosquito.</b>
+
+Authors: Cera R. Fisher, Anastacia E. Dressel, Juan J. Silva, Jeffrey G. Scott
+
+```{r setup, include=FALSE, results=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(poolr)
+
+```
+
+
+
+## Table of contents:
+
+1. [R allele frequency analysis](#Rfreq1)
+
+- [1.1 Horizontal regression](#1_1) 
+
+- [1.2 First-order regression](#1_2)
+
+- [1.3 Exploratory plots](#1_3)
+
+- [1.4 Determine if Cross A is different from Cross B](#1_4)
+
+- [1.5 Determine if males are different from females](#1_5)
+
+- [1.6 ANOVA of pooled data and post-hoc Tukey HSD](#1_6)
+
+2. [Genetic drift analysis](#Drift_2)
+
+- [2.1 Explanation of simulation experiment](#2_1)
+
+- [2.2 Overall simulation](#2_2)
+
+- [2.3 Adjustment of p-values to correct for multiple comparisons](#2_3)
+
+3. [Genotype frequency analysis](#Geno_3)
+
+- [3.1 ANOVA and Tukey HSD of genotypes by generations](#3_1)
+
+- [3.2 Hardy-Weinberg equilibrium tests within generation](#3_2)
+
+- [3.3 Hardy-Weinberg equilibrium based on previous generation](#3_3)
+
+- [3.4 Fisher's combined probability for Hardy-Weinberg equilibrium](#3_4)
+
+<a id="Rfreq1"></a>
+
+## 1. R allele frequency analysis 
+
+
+Read in data for genotype counts across all samples. 
+
+```{r}
+genos <- read.table(file="../data/AlleleCompetition_GenotypeCounts.txt", header=TRUE, sep="\t")
+
+```
+
+A bit of data manipulation for dummy coding the categorical data.
+
+```{r}
+
+genos <- genos %>% mutate(gen = 
+  case_when(
+    Generation == "F1" ~ 1, 
+    Generation == "F2" ~ 2,
+    Generation == "F3" ~ 3, 
+    Generation == "F5" ~ 5, 
+    Generation == "F7" ~ 7
+  )
+)
+```
+
+
+Get r allele frequency for each row.
+
+```{r}
+
+genos <- genos %>% mutate(
+  r.freq = ((RR*2) + SR)/(n*2)
+)
+
+```
+
+Check structure of data table.
+
+```{r}
+str(genos)
+```
+
+
+Now the input data is in the right shape and format, and we'll be able to do our allele frequency analyses. 
+
+<a id="1_1"></a>
+
+### 1.1 Horizontal regression 
+
+Are the data different from a horizontal line? (We also are creating these linear models as comparisons for the first order regressions.)
+
+```{r}
+
+ln.mod.a <- lm(data = genos, formula = r.freq ~ 1)
+summary(ln.mod.a)
+
+```
+
+The intercept is significant, so the data are not a horizontal line. 
+
+<a id="1_2"></a>
+
+### 1.2 First-order regression 
+
+Fit a linear model with R allele frequency as response variable and generation as predictor.
+
+```{r}
+
+ln.mod2.a <- lm(data=genos, formula = r.freq ~ gen)
+summary(ln.mod2.a)
+
+```
+
+Generation is a significant predictor variable for both cross A and cross B data. 
+
+<a id="1_3"></a>
+
+### 1.3 Exploratory plots 
+
+Let's see what our data and the linear model look like. 
+
+```{r}
+
+plot_a <- ggplot(genos, aes(x=gen, y=r.freq)) + 
+  geom_point(aes(color=Replicate)) + 
+  geom_smooth(method=lm)
+
+plot_a
+
+```
+
+
+We observe some data points that fall outside the confidence interval, and in some cases, some populations seem to have an increase in R allele frequency between measured generations. It would be useful to make a plot where we can see each populations' allele frequency over generations. 
+
+#### 1.3.a Raw line plot of R frequency change over generations per replicate.
+
+This plot uses some very fancy `geoms()` and labeling to make things clear, because we like to be clear. 
+
+```{r}
+## Set up  labels
+genos <- genos %>% mutate(
+  label = if_else(gen == 7, as.character(Replicate), NA_character_)
+)
+
+## Set up some colors 
+
+library(colorspace)
+replicates = c("A1", "A2", "A3", "B1", "B2", "B3")
+colsA = sequential_hcl(h1=15, c1=150, n=6)
+colsB = sequential_hcl(h1=200, c1=150, n=6)
+cols = c(colsA[1:3], colsB[1:3])
+replicate_colors=cols
+names(replicate_colors) = replicates
+
+## Make a plot
+
+grand_plot <- ggplot(genos[,], aes(x=gen, y=r.freq)) +
+  geom_point(aes(color=Replicate)) + 
+  geom_line(aes(group=Replicate, color=Replicate)) + 
+  geom_label_repel(aes(label=label, color=Replicate), na.rm=TRUE) + 
+  geom_line(data=genos[c(1,3),], aes(x=gen, y=r.freq), color=replicate_colors[1]) + 
+  geom_line(data=genos[c(1,4),], aes(x=gen, y=r.freq), color=replicate_colors[2]) + 
+  geom_line(data=genos[c(1,5),], aes(x=gen, y=r.freq), color=replicate_colors[3]) +
+  geom_line(data=genos[c(2,6),], aes(x=gen, y=r.freq), color=replicate_colors[4]) +
+  geom_line(data=genos[c(2,7),], aes(x=gen, y=r.freq), color=replicate_colors[5]) +
+  geom_line(data=genos[c(2,8),], aes(x=gen, y=r.freq), color=replicate_colors[6]) +
+  scale_color_manual(values = replicate_colors, guide="none") +
+  theme_minimal() + 
+    labs(title="Change in R allele frequency across generations by replicate", 
+       x="Generation", 
+       y="R allele frequency")
+
+
+grand_plot
+
+
+```
+
+That reveals the true shape of the data. Already, there's an impression that, while R allele frequency *does* decrease over all, the effect size (related to selection strength) might be small. 
+
+We want to know if we can pool this data without violating the assumption that the populations are not different from each other for any important biological reasons, such as the sex of the initial resistant parent population, or the sex of the individual mosquitos. 
+
+<a id="1_4"></a>
+
+### 1.4 Determine if Cross A is different from Cross B 
+
+Does it matter if the population was founded from resistant males or resistant females? (i.e., is there a mitochondrial DNA effect?) 
+
+Cross A: Female resistant and male susceptible
+Cross B: Female susceptible and male resistant 
+
+We're using both ANOVA and paired t.test to show that Cross A and Cross B are not different. 
+
+```{r}
+
+## Pooled data - rfreq response variable, generation as predictor. 
+
+lm.mod <- lm(formula=r.freq ~ gen, data=genos)
+summary(lm.mod)
+
+## Pooled data - rfreq response variable, generation and cross as predictors. 
+
+lm.mod.cross1 <- lm(formula=r.freq ~ Cross, data=genos)
+summary(lm.mod.cross1)
+
+## Pooled data - rfreq response variable, generation and a Cross*generation interaction term as predictor 
+### This is more relevant, because the interaction term tracks Cross across generations. 
+
+lm.mod.cross <- lm(formula=r.freq ~ gen + Cross:gen, data = genos)
+summary(lm.mod.cross)
+```
+
+These three linear models indicate that while generation remains a significant predictor, Cross is not, nor is there an interaction between Cross and generation. 
+
+#### 1.4.a ANOVA of linear models
+
+```{r}
+#Fit analysis of variance model with a call to lm
+aov_cross <- aov(data=genos, r.freq ~ Cross)
+aov_cross
+summary(aov_cross)
+#Compute anova table for variance model and print in 'pretty' way
+print(anova(aov_cross))
+```
+
+ANOVA shows that the means of the two crosses are not different from each other. 
+
+#### 1.4.b T-tests of Cross A versus Cross B
+
+Let's also make this comparison with paired t-tests across generations. 
+
+```{r}
+library("plyr")
+detach("package:plyr", unload=TRUE)
+### This won't work if the plyr library is loaded over dplyr, so we load it and then detach it to make sure it's not masking dplyr.
+means <- genos %>% 
+  filter(!(Generation=="F1")) %>% 
+  group_by(Cross, Generation) 
+
+ 
+means <- means %>% 
+  summarize(avg=mean(r.freq))
+
+means
+
+means_a <- means$avg[means$Cross=="A"]
+names(means_a) <- means$Generation[means$Cross=="A"]
+
+
+means_b <- means$avg[means$Cross=="B"]
+names(means_b) <- means$Generation[means$Cross=="B"]
+
+means_a
+means_b
+
+t.test(means_a, means_b, paired=T, var.equal = T)
+
+t.test(means_a, means_b, paired=F, var.equal = T)
+
+```
+
+Paired and unpaired t-tests indicate that the generation means within each cross are not different from each other. 
+
+This is also clear because of the fact that their confidence intervals overlap:
+
+#### 1.4.c Smoothed linear model plot for two crosses combined
+
+```{r}
+
+cross_cols = replicate_colors[c(2,5)]
+names(cross_cols) = c("A", "B")
+
+grand_plot <- ggplot(genos[,], aes(x=gen, y=r.freq)) +
+  geom_point(aes(color=Cross)) + 
+  geom_smooth(method=lm, alpha=0.2,  aes(color="linear regression", fill="linear regression")) +
+  theme_minimal() + 
+  scale_color_manual(values=cross_cols) + 
+  labs(title="Decrease in R allele frequency across 7 generations", 
+       x = "Generation", 
+       y = "R allele frequency", 
+       caption = "Shaded area represents 95% confidence interval based on linear regression")
+
+grand_plot
+```
+
+<a id="1_5"></a>
+
+### 1.5 Determine if males are different from females 
+
+We also want to be sure that there is no sex-biased effect on the R frequency or genotypes. The data segregated by sex was collated separately in Excel, so we need to read that file in. 
+
+```{r}
+sex.genos <- read.table("../data/AlleleCompetition_GenotypeCounts_bySex.txt", header=T, sep="\t")
+
+sex.genos <- sex.genos %>% mutate(gen = 
+  case_when(
+    Generation == "F1" ~ 1, 
+    Generation == "F2" ~ 2,
+    Generation == "F3" ~ 3, 
+    Generation == "F5" ~ 5, 
+    Generation == "F7" ~ 7
+  )
+)
+
+sex.genos <- sex.genos %>% mutate(
+  r.freq = ((RR*2) + SR)/(n*2)
+)
+
+str(sex.genos)
+
+```
+
+Now we have the data read in and we can run the same kinds of tests. 
+
+#### 1.5.a Fit linear models on sex segregated data
+
+```{r}
+
+## Linear model with rfreq as response variable and generation as predictor. 
+lm.fit.gen <- lm(formula=r.freq ~ gen, data=sex.genos)
+summary(lm.fit.gen)
+
+## Linear model with rfreq as response variable and sex as predictor. 
+lm.fit.sex <- lm(formula=r.freq ~ Sex, data=sex.genos)
+summary(lm.fit.sex)
+
+## Linear model with rfreq as response variable, gen as predictor, and an interaction term of sex*gen as predictor. 
+lm.fit.sexgen <- lm(formula=r.freq ~ gen + Sex:gen, data=sex.genos)
+summary(lm.fit.sexgen)
+
+```
+
+#### 1.5.b ANOVA of sex-segregated data 
+
+There doesn't appear to be any effect of sex. Let's model with an ANOVA.
+
+```{r}
+
+# Fit variance model with generation, sex, and a sex*gen term. 
+aov_sex <- aov(data=sex.genos, formula=r.freq ~ Sex)
+aov_sex
+summary(aov_sex)
+
+# Compute anova and print table in a 'pretty' way
+print(anova_sex <- anova(aov_sex))
+```
+
+ANOVA indicates that there is no difference between the group means when the data is partitioned by sex. 
+
+#### 1.5.c T-tests of sex segregated data 
+
+Now let's try the t-tests. First, filter and separate the data so we can compare them. 
+
+```{r}
+
+# This won't work is plyr is loaded over dplyr
+library("plyr")
+detach("package:plyr", unload=TRUE)
+means <- sex.genos %>%
+  filter(!(Generation=="F1")) %>% 
+  group_by(Sex, Generation) %>% 
+  summarize(avg=mean(r.freq))
+
+
+means_M <- means$avg[means$Sex=="M"]
+names(means_M) <- means$Generation[means$Sex=="M"]
+means_M
+
+means_F <- means$avg[means$Sex=="F"]
+names(means_F) <- means$Generation[means$Sex=="F"]
+means_F
+
+sex.diff <- t.test(means_F, means_M, var.equal = T, paired = T)
+sex.diff
+
+sex.diff <- t.test(means_F, means_M, var.equal = T, paired = F)
+sex.diff
+```
+
+According to ANOVA and to t-tests, paired and unpaired, the R frequencies are not different between male and female. We can safely combine all this data. 
+
+<a id="1_6"></a>
+
+### 1.6 ANOVA of pooled data and post-hoc Tukey HSD 
+
+We want to take the ANOVA over the whole set, which we know indicates that generation is a significant term, and perform a Tukey Honestly Significant Difference (post-hoc) test to determine which groups are different from each other. 
+
+
+```{r}
+
+gens_lm <- lm(data=genos, r.freq ~ Generation)
+summary(gens_lm)
+```
+
+```{r}
+gens_anova <- aov(data=genos,r.freq ~ Generation)
+summary(gens_anova)
+print(anova(gens_anova))
+## Please note here that we are using Generation as data type factor, and not generation as data type integer. This is because we're not trying to understand whether change over a continuous variable (the arrow of time!) is happening, we're trying to understand how groups are different from each other. The tukey test will need grouped data and that's what factors are.
+## The way that the grouped data are different from each other will show us the "arrow of time"
+
+tukey_rfreq <- TukeyHSD(x=gens_anova, 'Generation', conf.level=0.95)
+tukey_rfreq
+```
+
+
+```{r eval=FALSE}
+plot(tukey_rfreq)
+```
+
+![The family-wise confident interval plot is hard to read in native plot size](Z:/Shared Documents/Cera Fisher/Research/Allele_Competition_1534C-RK/AC_1534C-RK_DataAnalysis/output/Tukey_RFreq_Generations_familywiseConfLevel.png)
+
+```{r}
+
+# Generation-wise means 
+library("plyr")
+detach("package:plyr", unload=TRUE)
+means_gen <- genos %>%
+  group_by(Generation) %>% 
+  summarize(avg=mean(r.freq))
+means_gen 
+```
+
+
+```{r}
+### we're actually going to use the package agricolae for the tukey HSD, because
+### it more transparently computes groupings
+library(agricolae)
+
+tukey_rfreq_2 <- HSD.test(gens_anova, trt="Generation")
+tukey_rfreq_2
+
+plot(tukey_rfreq_2)
+```
+
+Groups a and c don't overlap, though a and b do, and b and c do. 
+Let's add that to our linear regression plot. 
+
+
+```{r}
+grp.df <- tukey_rfreq_2$groups
+groups <- grp.df$groups
+names(groups) <- row.names(grp.df)
+
+cross_cols = replicate_colors[c(2,5)]
+names(cross_cols) = c("A", "B")
+
+## it's a shame to not be able to do this more programmatically, but we'll just have to hard code it for the publication plot. 
+genos <- genos %>% mutate(
+  tukey_labels = case_when(
+    Generation == "F1" ~ "a", 
+    Generation == "F2" ~ "a",
+    Generation == "F3" ~ "ab", 
+    Generation == "F5" ~ "bc", 
+    Generation == "F7" ~ "c"
+  )
+) %>%
+  mutate(
+    tukey_labels = if_else(Replicate == "A1", as.character(tukey_labels), NA_character_)
+  )
+
+genos$tukey_labels[1] <- "a"
+
+grand_plot <- ggplot(genos[,], aes(x=gen, y=r.freq)) +
+  geom_point(aes(color=Cross)) + 
+  geom_smooth(method=lm, alpha=0.2, fill="grey", color="grey") +
+  theme_minimal() +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank()) +
+  scale_x_continuous(breaks=c(1,2,3,5,7), labels=c("F1","F2", "F3", "F5", "F7")) + 
+  scale_color_manual(values=cross_cols) + 
+  annotate(geom="text", x=genos$gen[1], y=genos$r.freq[1]+0.02, 
+           label=genos$tukey_labels[1]) +
+  annotate(geom="text", x=genos$gen[3], y=max(genos$r.freq[genos$Generation=="F2"])+0.02, 
+           label=genos$tukey_labels[3]) +
+  annotate(geom="text", x=genos$gen[9], y=max(genos$r.freq[genos$Generation=="F3"])+0.02, 
+           label=genos$tukey_labels[9]) +
+  annotate(geom="text", x=genos$gen[15], y=max(genos$r.freq[genos$Generation=="F5"])+0.02, 
+           label=genos$tukey_labels[15]) +
+  annotate(geom="text", x=genos$gen[21], y=max(genos$r.freq[genos$Generation=="F7"])+0.02, 
+           label=genos$tukey_labels[21]) +
+  labs(title="Decrease in R allele frequency across 7 generations", 
+       x = "Generation", 
+       y = "R allele frequency") 
+  
+
+grand_plot
+
+```
+
+
+<a id="Drift_2"></a>
+
+## 2. Genetic drift analysis by simulation 
+
+Are the changes in allele frequency just due to genetic drift? The best way to determine this is by simulation. 
+
+<a id="2_1"></a>
+
+### 2.1 Explanation of simulation experiment 
+
+The code for the function is provided separately in file `MultiGenDrift.R` because it is pretty long. 
+
+```{r warning=FALSE, message=FALSE}
+source("MultiGenDrift.R")
+
+```
+
+<a id="2_2"></a>
+
+### 2.2 Overall simulation
+
+```{r drift-overall, eval=FALSE}
+popsize = 800
+Rstart = 0.5
+Rend = mean(genos$r.freq[genos$Generation=="F7"])
+nsims=100000
+histo_vector <- MultiGenDrift(SIMS = nsims, gens = 6, size_of_pop = popsize, R_start_freq = Rstart, R_end_freq = Rend)
+
+empirical_p <- histo_vector[[2]]
+ResultsDF <- data.frame(histo_vector[[1]])
+colnames(ResultsDF) <- 'Result'
+
+hist_plot <- ggplot(data=ResultsDF, aes(x=Result)) + 
+  geom_histogram(stat="bin", position="dodge", 
+                 binwidth=0.005, fill="grey", alpha=0.5, color="black") +
+  geom_vline(xintercept = Rstart, color="red") +
+  geom_vline(xintercept = Rend, color="red") + 
+  theme_minimal() +
+  labs(title="Drift simulation results", 
+       x=paste("Range of R allele frequencies at Generation", 7, sep=" "), 
+       y=paste("Count of frequencies in 0.005 width bins", sep=""), 
+       caption="Over 100,000 simulations of drift, the number of times an R allele
+       frequency occurred less than or equal to our real result (0.315) was 0.")
+hist_plot
+
+# write.table(ResultsDF, file="../output/DriftSimulation_F1toF7_100k_Results.tab", 
+#             row.names = F, quote=F, eol="\n", sep="\t")
+
+```
+
+That was 100,000 simulations, so we're not going to re-run it in the R-markdown generation, but here is the resulting plot at the time of analysis:
+
+![histogram plot of 100,000 genetic drift simulations](../output/DriftSimulations_F1toF7.png)
+
+That's how we do this. But we actually need to compute this separately for each population at each generation, so this really needs to be crunched through via script. 
+
+This script is provided separately in the file `DriftSimulations.Rmd`.
+
+<a id="2_3"></a>
+
+### 2.3 Adjustment of p-values to correct for multiple comparisons 
+
+Alpha thresholds control for Type I error, but when we have a set of repeated tests, we run the risk of hitting that alpha erroneously. P-value correction is necessary when multiply testing. Bonferroni is the classical correction, but the stat vignette says "There seems to be no reason to use the unmodified Bonferroni correction because it is dominated by Holm's method, which is also valid under arbitrary assumptions". Therefore we are using `method="holm"`. 
+
+I collected the initial p-values generated at run time and put them into a tab-delimited text file to read into R. 
+
+```{r p-value-correction}
+
+pvals <- read.table("../data/DriftSimulationPvalues.txt", sep="\t", header=T)
+str(pvals)
+
+pvals$padj <- p.adjust(p=pvals$Pvalue, method="holm")
+
+write.table(pvals, "../output/DriftSimulationAdjustedPvalues.txt", row.names = F, 
+            quote=F, eol="\n", sep="\t")
+
+nonsig <- pvals %>% filter(padj > 0.05)
+
+nonsig
+
+```
+
+After pval correction, there are 10 (of 42) comparisons that no longer fall below the alpha threshold of 0.05. 
+
+<a id="Geno_3"></a>
+
+## 3. Genotype frequency analysis
+
+Does genotype frequency change over generations? If they do, are they out of HW equilibrium? Being out of HW equilibrium indicates that the assumptions of Hardy-Weinberg's law are being violated, and one of the four forces of evolution is active. Because we're controlling for everything but selection (and we tested for drift), if the populations are out of equilibrium, it must be due to selection. 
+
+First, convert data to long format. 
+```{r genos-data-conversion}
+str(genos)
+genos_long <- pivot_longer(genos, 
+                           cols = 6:8, # operating on the genotype columns
+                           names_to = "genotype", 
+                           values_to = "genotype.count")
+head(genos_long)
+genos_long <- subset(genos_long, Generation!="F1") # Exclude F1, because it is out of whack to start with!
+
+genos_long$Generation <- factor(genos_long$Generation)
+genos_long$genotype <- factor(genos_long$genotype)
+genos_long <- mutate(genos_long, genot.freq.obs = genotype.count/n)
+
+```
+
+<a id="3_1"></a>
+
+### 3.1 ANOVA of genotypes by generations 
+
+```{r}
+# Get means of genotype frequencies over generations 
+
+library("plyr")
+detach("package:plyr", unload=TRUE)
+genos_means <- genos_long %>%
+  filter(!(Generation=="F1")) %>% 
+  group_by(Generation, genotype) %>% 
+  summarize(avg=mean(genot.freq.obs))
+genos_means
+```
+
+
+```{r}
+
+lm.genos.2 <- lm(data=genos_long, formula=genot.freq.obs ~ genotype + Generation + Generation:genotype)
+summary(lm.genos.2)
+```
+
+
+
+```{r}
+anova_genos <- aov(data = subset(genos_long, Generation!="F1"), formula=genot.freq.obs ~ genotype + Generation + Generation:genotype)
+summary(anova_genos)
+```
+
+```{r}
+print(anova(anova_genos))
+```
+
+There is a statistically significant difference between genotype frequency means. 
+
+```{r}
+### Separate anovas for each genotype
+
+lm_RR <- lm(data=subset(genos_long, genotype=="RR"), formula=genot.freq.obs~Generation)
+lm_RR
+summary(lm_RR)
+anova_RR <- aov(data=subset(genos_long, genotype=="RR"), formula=genot.freq.obs ~ Generation)
+summary(anova_RR)
+print(anova(anova_RR))
+```
+
+Generation is significant for RR. 
+
+```{r}
+lm_SR <- lm(data=subset(genos_long, genotype=="SR"), formula = genot.freq.obs ~ Generation)
+summary(lm_SR)
+anova_SR <- aov(data=subset(genos_long, genotype=="SR"), formula=genot.freq.obs ~ Generation)
+summary(anova_SR)
+print(anova(anova_SR))
+```
+
+Generation is not signification for SR. 
+
+```{r}
+lm_SS <- lm(data=subset(genos_long, genotype=="SS"), formula=genot.freq.obs ~ Generation)
+summary(lm_SS)
+anova_SS <- aov(data=subset(genos_long, genotype=="SS"), formula=genot.freq.obs ~ Generation)
+summary(anova_SS)
+print(anova(anova_SS))
+
+```
+
+Generation is significant for SS.
+
+#### 3.1.a Tukey HSD post-hoc test
+
+```{r}
+
+library(agricolae)
+tukey_genos_2 <- HSD.test(anova_genos, trt=c("Generation", "genotype"))
+tukey_genos_2
+```
+
+```{r eval=FALSE}
+plot(tukey_genos_2)
+```
+
+This plot is hard to read as natively generated, so I'll embed the results with an expanded x axis. 
+
+![Genotype by generation Tukey groups and ranges](../output/Tukey_Groups_and_Range_GenotypeFreqsInteractionTermWithGenerationAsFactor.png)
+This pattern echoes what we saw with the adjusted p-values for the Drift simulations. Differences between genotypes over generations are difficult to detect when the generations are only one or two apart, but are very obvious over 7 generations. 
+
+#### 3.1.b Build plot with significance groups
+
+Get the group assignments from the Tukey HSD test so we can add it to our genotype frequency plot. 
+
+```{r get-genos-tukey-groups}
+
+data_summary <- function(data, varname, groupnames){
+  require(plyr)
+  length2 <- function (x, na.rm=FALSE) {
+    if (na.rm) sum(!is.na(x))
+    else       length(x)
+  }
+  
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm=TRUE),
+      N = length2(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE))
+  }
+  data_sum<-ddply(data, groupnames, .fun=summary_func,
+                  varname)
+  data_sum <- rename(data_sum, c("mean" = varname))
+  data_sum$se <- data_sum$sd / sqrt(data_sum$N)
+ return(data_sum)
+}
+
+genos_long <- subset(genos_long, Generation!="F1")
+errorbars <- data_summary(genos_long, varname="genot.freq.obs", groupnames=c("Generation", "genotype"))
+
+tukey_genos_groups <- tukey_genos_2$groups
+tukey_genos_groups <- tukey_genos_groups %>% 
+  mutate(group_name = row.names(tukey_genos_groups)) %>% 
+  mutate(Generation = gsub(x=group_name, ":.*", "")) %>% 
+  mutate(genotype = gsub(x=group_name, ".*:", ""))
+
+df <- errorbars %>% 
+  mutate(gen=case_when(
+    Generation=="F2" ~ 2, 
+    Generation=="F3" ~ 3, 
+    Generation=="F5" ~ 5, 
+    Generation=="F7" ~ 7
+  )) %>%
+  mutate(group_name=paste(gen, genotype, sep=":")) %>%
+  mutate(tukey_group=case_when(
+    group_name=="3:SR" ~ "a", 
+    group_name=="2:SR" ~ "a", 
+    group_name=="5:SR" ~ "a",
+    group_name=="7:SS" ~ "a", 
+    group_name=="7:SR" ~ "a",
+    group_name=="5:SS" ~ "ab",
+    group_name=="3:SS" ~ "bc", 
+    group_name=="2:SS" ~ "cd", 
+    group_name=="2:RR" ~ "cde", 
+    group_name=="3:RR" ~ "def", 
+    group_name=="5:RR" ~ "ef", 
+    group_name=="7:RR" ~ "f"
+  ))
+
+
+plot <- ggplot(data=df, aes(x=Generation, y=genot.freq.obs, groups=genotype)) + 
+  # Make columns for the mean genotype frequency for each generation + genotype
+  geom_col(aes(x=Generation, y=genot.freq.obs, fill=genotype), color="#000000", position=position_dodge()) + 
+  # Add errorbars (currently standard deviation)
+  geom_errorbar(aes(ymin=genot.freq.obs-se, ymax=genot.freq.obs+se), width=.2, position=position_dodge(.9))  + 
+  # Add Tukey HSD groups
+  geom_text(data=df, aes(x=Generation, y=genot.freq.obs+se+0.02, label=tukey_group), position=position_dodge(.9)) +
+  theme_minimal() + 
+  labs(title="Genotype frequency change over generations", 
+       y="Observed genotype frequency")
+  
+
+plot
+```
+
+This is the raw plot -- we'll, again, have to prettify it in Illustrator. 
+
+```{r}
+write.table(df, file="../data/GenotypeFrequenciesWithStandardErrorAndTukeyGroups.txt", sep="\t", eol="\n", quote=FALSE, row.names = FALSE)
+
+
+```
+
+
+<a id="3_2"></a>
+
+### 3.2 HW Equilibrium test within generations
+
+We will test for Hardy-Weinberg equilibrium within each generation using a Chi-square goodness of fit test. If the p-value is below the alpha threshold of 0.05, that would indicate that the genotypes observed are not in equilibrium with the allele frequencies observed. 
+
+```{r HW data}
+
+# start with original raw data and reshape it. 
+HW_genos <- read.table("../data/AlleleCompetition_GenotypeCounts.txt", 
+                       sep="\t", header=T)
+
+
+str(HW_genos)
+
+```
+
+Data manipulations done, let's do the HW chiSq test for each generation with its own R allele frequency (the classic method) 
+
+#### 3.4.a Within generation HWE
+
+Read in and reshape data. 
+
+```{r}
+str(HW_genos)
+
+# Current data format is "long" data - each genotype gets its own row
+
+HW_genos <- HW_genos %>%
+  mutate(rfreq=(SR+(RR*2))/(2*n))
+
+# Functions to get expected genotype counts
+getSSexp <- function(rfreq, n) {
+  sfreq = 1 - rfreq
+  SSexp = (sfreq**2) * n
+  return(SSexp)
+}
+
+getRRexp <- function(rfreq, n) {
+  RRexp = (rfreq**2) * n
+  return(RRexp)
+}
+
+getSRexp <- function(rfreq, n) {
+  SRexp = (2*rfreq*(1-rfreq)) * n
+  return(SRexp)
+}
+
+#Check to make sure we get expected results 
+getSSexp(0.5, 100)
+getSRexp(0.5, 100)
+getRRexp(0.5, 100)
+
+## Add expected genotype counts to the DF 
+
+HW_genos <- HW_genos %>%
+  mutate(SSexp = round(getSSexp(rfreq, n), 2)) %>%
+  mutate(SRexp = round(getSRexp(rfreq, n), 2)) %>%
+  mutate(RRexp = round(getRRexp(rfreq, n), 2))
+
+
+```
+
+We are using the chi-square goodness-of-fit test. 
+
+The formula for $X^{2}$ is: 
+\begin{equation}
+
+X^{2} = \frac{(n_{SS} - e_{SS})^{2}}{e_{SS}} + 
+\frac{(n_{SR} - e_{SR})^{2}}{e_{SR}} + 
+\frac{(n_{RR} - e_{RR})^{2}}{e_{RR}}
+
+\end{equation}
+
+```{r}
+
+chiSq = c(0)
+for (i in seq(1, length(HW_genos$Full.Name), 1)) {
+    x2 = 
+           sum(
+             ((HW_genos$SS[i] - HW_genos$SSexp[i])**2 / 
+                HW_genos$SSexp[i]), 
+              ((HW_genos$SR[i] - HW_genos$SRexp[i])**2 / 
+                HW_genos$SRexp[i]), 
+              ((HW_genos$RR[i] - HW_genos$RRexp[i])**2 / 
+                HW_genos$RRexp[i]) 
+           )
+  chiSq = c(chiSq, x2) ## add each value to the chiSq vector
+  
+}
+
+## Remove that pesky first value that we made when we initiated the variable
+chiSq <- chiSq[-1]
+
+HW_genos$x2 <- chiSq
+
+#Calculate pvalues from the Chi-Squared distribution
+pvaluesthisgen <- pchisq(q=as.numeric(HW_genos$x2), 2, lower.tail = FALSE)
+
+HW_genos$x2.pvals <- pvaluesthisgen
+
+HW_genos$Signif <- HW_genos$x2.pvals < 0.05
+
+HW_genos[HW_genos$Signif,]
+```
+
+
+These results are the same as my Excel calculations. Other than the F1, there aren't any populations out of equilibrium. We certainly expect that the F1 is out of equilibrium, because that population was not panmictic - we forced cross-breeding of homozygous resistant and homozygous susceptible. 
+
+However, we want to know if genotype frequencies are changing between generations in a way that violated HWE, so we want to perform the Chi-Square test using the expected genotype frequencies for this generation if the allele frequency were the same as the previous generation. 
+
+<a id="3_3"></a>
+
+### 3.3 HW Equilibrium based on previous generation
+
+Thus, we need to build a table that has observed HW genotype counts and expected HW genotype counts for each population. I've calculated the expected genotype frequencies for the current and last generations in Excel, and put that into a tab delimited sheet. 
+
+```{r}
+
+genosHW_long <- read.table("../data/HWTableForR.txt", sep="\t", header=T)
+str(genosHW_long)
+# Reshape data 
+
+genosHW_wide <- genosHW_long %>% 
+  pivot_wider(names_from = genotype, values_from = c(genot.freq.obs, genot.freq.exp.samegen, genot.freq.exp.lastgen, genot.count.obs, genot.count.exp.samegen, genot.count.exp.lastgen))
+
+## The genot.count.exp fields (genotype count expected) are based on the previous generation's R allele frequency and the current generation's tested population size
+
+## subset data 
+
+genosHW_wide_lastgen <- genosHW_wide %>% select(
+  fullname, n, genot.count.obs_SS, genot.count.obs_SR, genot.count.obs_RR, 
+  genot.count.exp.lastgen_SS, genot.count.exp.lastgen_SR, genot.count.exp.lastgen_RR
+) 
+str(genosHW_wide_lastgen)
+
+chiSq = c(0)
+
+for (i in seq(1, length(genosHW_wide_lastgen$fullname), 1)) {
+    x2 = 
+           sum(
+             ((genosHW_wide_lastgen$genot.count.obs_SS[i] - genosHW_wide_lastgen$genot.count.exp.lastgen_SS[i])**2 / 
+                genosHW_wide_lastgen$genot.count.exp.lastgen_SS[i]), 
+              ((genosHW_wide_lastgen$genot.count.obs_SR[i] - genosHW_wide_lastgen$genot.count.exp.lastgen_SR[i])**2 / 
+                genosHW_wide_lastgen$genot.count.exp.lastgen_SR[i]), 
+              ((genosHW_wide_lastgen$genot.count.obs_RR[i] - genosHW_wide_lastgen$genot.count.exp.lastgen_RR[i])**2 / 
+                genosHW_wide_lastgen$genot.count.exp.lastgen_RR[i]) 
+           )
+  chiSq = c(chiSq, x2) ## add each value to the chiSq vector
+  
+}
+
+chiSq = chiSq[-1] ## Remove the blank that we used to initiate the vector
+genosHW_wide_lastgen$x2 <- chiSq
+
+#Calculate pvalues from the Chi-Squared distribution
+pvalueslastgen <- pchisq(q=as.numeric(genosHW_wide_lastgen$x2), 2, lower.tail = FALSE)
+
+genosHW_wide_lastgen$x2.pval <- pvalueslastgen
+
+Signif <- genosHW_wide_lastgen$x2.pval < 0.05
+genosHW_wide_lastgen$significant <- Signif
+
+na.omit(genosHW_wide_lastgen[genosHW_wide_lastgen$significant == TRUE,])
+```
+
+Happily, these values agree with what I calculated separately in Excel. (Should make sure to include that Excel sheet in Supplementary Data). (NAs are because the F1s don't have a previous generation to compare to.)
+
+```{r}
+write.table(genosHW_wide_lastgen, file="../output/HW_ChiSqGoodnessOfFit_basedOnLastGen.txt", 
+            row.names = F, quote = F, eol="\n", sep="\t")
+
+
+```
+
+
+
+<a id="3_4"></a>
+
+### 3.4 Fisher's combined probability 
+
+Finally, we want to perform a meta-analysis of these tests to get a global p-value, assessing whether or not the evolving populations are in Hardy-Weinberg Equilibrium. We'll use Fisher's Combined Probability test for this. In effect, this is testing the null meta-hypothesis that the null hypothesis was actually true for each and every one of the tests. The alternative meta-hypothesis is that at least one of the separate alternative hypotheses was true. In this case, a p-value below 0.005 means that we're correct in saying that in at least one of these cases, selection is happening. 
+
+<a id="3_5"></a>
+
+#### 3.5.a Meta-analysis of previous generation HWE
+```{r}
+
+P.fishers <- fisher(na.omit(genosHW_wide_lastgen$x2.pval))
+
+P.fishers
+```
+The pooled p-value is less than our alpha threshold of 0.05. This indicates that we would be correct in rejecting at least one alternative hypothesis. 
+
+
+#### 3.5.b Meta-analysis of within-generation HWE 
+
+This is more or less a positive control. Except for the F1s, all of the populations were found to be in equilibrium based on their own R allele frequencies. Fisher's combined test here is asking the question "Are we right to have rejected the alternative hypothesis (that the populations are not in equilibrium) in every case?" 
+
+It's worth noting that Fisher's method amplifies statistical significance while p-value adjustment diminishes statistical significance. With Fisher's method, if we have a group of p-values that are marginal but not below our alpha threshold, it's very possible to get a global p-value that is below the alpha threshold. This would probably reflect low power in our tests. 
+
+
+```{r}
+str(HW_genos)
+
+## We do not want to include F1 because they violate HW assumptions
+
+HW_genos2 <- subset(HW_genos, Generation!="F1")
+dim(HW_genos2)
+
+P.fishers <- fisher(na.omit(HW_genos2$x2.pvals))
+P.fishers
+
+```
+
+Our global p value for the HW equilibrium test within generations is not significant. 
+This indicates that we would be incorrect if we had rejected any of the null hypotheses. 
+
+
+### Save RData file for making publication plots 
+
+```{r}
+save.image(file="../ACData.RData")
+```
+
+### R Session Info
+
+```{r}
+sessionInfo()
+
+```
+
